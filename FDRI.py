@@ -211,9 +211,16 @@ class FDRIModule(DataSourceIngestModule):
         try:
             os.mkdir(module_dir)
             for file in files:
-                filename, file_extension = os.path.splitext(file.getName())
-                ContentUtils.writeToFile(file, File(
-                    module_dir + "\\" + filename + "__id__" + str(file.getId()) + file_extension))
+                #
+                # If file size is more than 0
+                # TODO:: User Choice as option
+                #
+                if file.getSize() > 1:
+                    filename, file_extension = os.path.splitext(file.getName())
+                    ContentUtils.writeToFile(file, File(
+                        module_dir + "\\" + filename + "__id__" + str(file.getId()) + file_extension))
+                else:
+                    self.log(Level.INFO, "Skiping file: " + file.getName())
         except:
             self.log(
                 Level.INFO, "Directory already exists for this data source skipping file copy")
