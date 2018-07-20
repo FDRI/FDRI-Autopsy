@@ -2,6 +2,7 @@
 
 import inspect
 import json
+from datetime import datetime
 import os  # file checking
 import shutil  # file copy
 import subprocess  # .exe calling
@@ -210,47 +211,41 @@ class FDRIModule(DataSourceIngestModule):
         # We allways copy the files, as we will want to change them
         try:
             os.mkdir(module_dir)
+        except:
+            self.log(Level.INFO, "Directory already exists for this module")
+
+        try:
+            os.mkdir(module_dir + "\\img\\")
             for file in files:
-                #
-                # If file size is more than 0
+                # If file size is more than 1kb
                 # TODO:: User Choice as option
-                #
-                if file.getSize() > 1:
-                    filename, file_extension = os.path.splitext(file.getName())
+                if file.getSize() > 1024:
+                    filename, file_extension = os.path.splitext(
+                        file.getName())
                     ContentUtils.writeToFile(file, File(
-                        module_dir + "\\" + filename + "__id__" + str(file.getId()) + file_extension))
+                        module_dir + "\\img\\" + filename + "__id__" + str(file.getId()) + file_extension))
                 else:
                     self.log(Level.INFO, "Skiping file: " + file.getName())
         except:
             self.log(
-                Level.INFO, "Directory already exists for this data source skipping file copy")
+                Level.INFO, "Image folder already exists, skiping file copy")
 
         # Location where the output of executable will appear
-        outFile = module_dir + "\\facesFound.txt"
-        outDFxml = module_dir + "\\dfxml_" + FDRIModuleFactory.moduleName + ".xml"
-        outPositiveFile = module_dir + "\\wanted.txt"
+        #outFile = module_dir + "\\facesFound.txt"
+        #outDFxml = module_dir + "\\dfxml_" + FDRIModuleFactory.moduleName + ".xml"
+        #outPositiveFile = module_dir + "\\wanted.txt"
+        timestamp = datetime.now().strftime('%YY%mM%dD-%HH%MM%SS')
+        workspace = module_dir + "\\" + timestamp
+        configFilePath = workspace + "\\params.json"
 
-        # Some file cleanup before executing
-        if os.path.exists(outFile):
-            os.remove(outFile)
-
-        if os.path.exists(outDFxml):
-            os.remove(outDFxml)
-
-        if os.path.exists(outPositiveFile):
-            os.remove(outPositiveFile)
-
-        configFilePath = module_dir + "\\params.json"
+        os.mkdir(workspace)
 
         with open(configFilePath, "w") as out:
             json.dump({
-                "flags": self.localSettings.getAllFlags(),
                 "paths": self.localSettings.getAllPaths(),
-                "imagesPath": module_dir,
+                "imagesPath": module_dir + "\\img",
                 "doRecognition": self.doRecognition,
-                "outputPath": outFile,
-                "outputPositivePath": outPositiveFile,
-                "dfxml_out_path": outDFxml
+                "workspace": workspace,
             }, out)
 
         #
@@ -289,6 +284,7 @@ class FDRIModule(DataSourceIngestModule):
 
         count = 0
         # Add images with the wanted faces to blackboard
+        outPositiveFile = workspace + "\\wanted.txt"
         if os.path.exists(outPositiveFile):
             with open(outPositiveFile, "r") as out:
                 for line in out:
@@ -317,30 +313,37 @@ class FDRIModule(DataSourceIngestModule):
 
                         # Adding derivated files to case
                         # These are files with borders on the found faces
-                        f_path = "Temp\\" + dataSource.getName() + "\\FDRIV\\" + \
-                            interestingFile.getName().split(
-                                ".")[0] + "__id__" + str(interestingFile.getId()) + ".jpg"
+                        name, extension = interestingFile.getName().split(".")
+                        f_path = name + "__id__" + str(interestingFile.getId()) + "." + extension
 
-                        f_size = os.path.getsize(module_dir + "\\" + interestingFile.getName().split(
-                            '.')[0] + "__id__" + str(interestingFile.getId()) + ".jpg")
-                        case = Case.getCurrentCase().getSleuthkitCase()
-                        try:
-                            abstract_f = case.getAbstractFileById(
-                                interestingFile.getId())
+                        # We need path relative to temp folder for Autopsy API
+                        f_temp_path = "Temp\\" + dataSource.getName() + "\\FDRIV\\" + timestamp + \
+                            "\\annotated\\" + f_path
 
-                            # https://sleuthkit.org/autopsy/docs/api-docs/4.4/classorg_1_1sleuthkit_1_1autopsy_1_1casemodule_1_1services_1_1_file_manager.html
-                            case.addDerivedFile("Anotated_" + interestingFile.getName(),
-                                                f_path, f_size, 0, 0, 0, 0, True, abstract_f, "",
-                                                FDRIModuleFactory.moduleName, FDRIModuleFactory.moduleVersion, "Image with faces",
-                                                TskData.EncodingType.NONE)
-                            self.complete_dfxml(outDFxml, interestingFile)
-                        except:
-                            self.log(Level.SEVERE, "Error getting abs file")
+                        f_abs_path = workspace + "\\annotated\\" + f_path
 
-                    self.complete_dfxml(outDFxml, interestingFile)
+                        # Temporary fix
+                        if os.path.exists(f_abs_path):
+                            f_size = os.path.getsize(f_abs_path)
+                            case = Case.getCurrentCase().getSleuthkitCase()
 
-        if os.path.exists(outFile):
-            with open(outFile, "r") as out:
+                            try:
+                                abstract_f = case.getAbstractFileById(
+                                    interestingFile.getId())
+
+                                # https://sleuthkit.org/autopsy/docs/api-docs/4.4/classorg_1_1sleuthkit_1_1autopsy_1_1casemodule_1_1services_1_1_file_manager.html
+                                case.addDerivedFile("Anotated_" + interestingFile.getName(),
+                                                    f_temp_path, f_size, 0, 0, 0, 0, True, abstract_f, "",
+                                                    FDRIModuleFactory.moduleName, FDRIModuleFactory.moduleVersion, "Image with faces",
+                                                    TskData.EncodingType.NONE)
+                            except:
+                                self.log(Level.SEVERE,
+                                         "Error getting abs file")
+
+                    self.complete_dfxml(workspace + "\\dfxml.xml", interestingFile)
+        outPositiveFile = workspace + "\\faces_found.txt"
+        if os.path.exists(outPositiveFile):
+            with open(outPositiveFile, "r") as out:
                 for line in out:
                     count += 1
                     file_id = line.split('__id__')[1].split('.')
@@ -368,26 +371,33 @@ class FDRIModule(DataSourceIngestModule):
 
                         # Adding derivated files to case
                         # These are files with borders on the found faces
-                        f_path = "Temp\\" + dataSource.getName() + "\\FDRIV\\" + \
-                            interestingFile.getName().split(
-                                ".")[0] + "__id__" + str(interestingFile.getId()) + ".jpg"
+                        name, extension = interestingFile.getName().split(".")
+                        f_path = name + "__id__" + str(interestingFile.getId()) + "." + extension
 
-                        f_size = os.path.getsize(module_dir + "\\" + interestingFile.getName().split(
-                            '.')[0] + "__id__" + str(interestingFile.getId()) + ".jpg")
-                        case = Case.getCurrentCase().getSleuthkitCase()
-                        try:
-                            abstract_f = case.getAbstractFileById(
-                                interestingFile.getId())
+                        # We need path relative to temp folder for Autopsy API
+                        f_temp_path = "Temp\\" + dataSource.getName() + "\\FDRIV\\" + timestamp + \
+                            "\\annotated\\" + f_path
 
-                            # https://sleuthkit.org/autopsy/docs/api-docs/4.4/classorg_1_1sleuthkit_1_1autopsy_1_1casemodule_1_1services_1_1_file_manager.html
-                            case.addDerivedFile("Anotated_" + interestingFile.getName(),
-                                                f_path, f_size, 0, 0, 0, 0, True, abstract_f, "",
-                                                FDRIModuleFactory.moduleName, FDRIModuleFactory.moduleVersion, "Image with faces",
-                                                TskData.EncodingType.NONE)
+                        f_abs_path = workspace + "\\annotated\\" + f_path
 
-                        except:
-                            self.log(Level.SEVERE, "Error getting abs file")
-                    self.complete_dfxml(outDFxml, interestingFile)
+                        # Temporary fix
+                        if os.path.exists(f_abs_path):
+                            f_size = os.path.getsize(f_abs_path)
+                            case = Case.getCurrentCase().getSleuthkitCase()
+
+                            try:
+                                abstract_f = case.getAbstractFileById(
+                                    interestingFile.getId())
+
+                                # https://sleuthkit.org/autopsy/docs/api-docs/4.4/classorg_1_1sleuthkit_1_1autopsy_1_1casemodule_1_1services_1_1_file_manager.html
+                                case.addDerivedFile("Anotated_" + interestingFile.getName(),
+                                                    f_temp_path, f_size, 0, 0, 0, 0, True, abstract_f, "",
+                                                    FDRIModuleFactory.moduleName, FDRIModuleFactory.moduleVersion, "Image with faces",
+                                                    TskData.EncodingType.NONE)
+                            except:
+                                self.log(Level.SEVERE,
+                                         "Error getting abs file")
+                    self.complete_dfxml(workspace + "\\dfxml.xml", interestingFile)
 
         IngestServices.getInstance().fireModuleDataEvent(
             ModuleDataEvent(FDRIModuleFactory.moduleName, BlackboardArtifact.ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT, None))
@@ -604,7 +614,7 @@ class UISettingsPanel(IngestModuleIngestJobSettingsPanel):
         self.setAlignmentX(JComponent.LEFT_ALIGNMENT)
         self.panel = JPanel()
         self.panel.setLayout(BoxLayout(self.panel, BoxLayout.Y_AXIS))
-        self.panel.setAlignmentY(JComponent.LEFT_ALIGNMENT)  
+        self.panel.setAlignmentY(JComponent.LEFT_ALIGNMENT)
 
         self.labelTop = JLabel("Choose file extensions to look for:")
         self.labelTop.setAlignmentX(JComponent.LEFT_ALIGNMENT)
@@ -642,10 +652,9 @@ class UISettingsPanel(IngestModuleIngestJobSettingsPanel):
         fl.add(self.clear_buttons['1'])
         self.panel.add(fl)
 
-
         self.panel.add(
             JLabel("Path to detector - Defaults to module path"))
-                                       
+
         self.panel.add(self.textInputs['2'])
         self.buttons['2'].setActionCommand("2")
         self.textInputs['2'].setEnabled(False)
@@ -680,7 +689,6 @@ class UISettingsPanel(IngestModuleIngestJobSettingsPanel):
         fl.add(self.clear_buttons['4'])
         self.panel.add(fl)
 
-        
         self.add(self.panel)
 
     def customizeComponents(self):
