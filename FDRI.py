@@ -60,6 +60,17 @@ class FDRIModuleFactory(IngestModuleFactoryAdapter):
     moduleName = "FDRI"
     moduleVersion = "V1.0"
 
+    #--------------------------------------------
+    # Class variables
+    # The variables are shared among the various
+    # threads that might run the module.
+    # (Autopsy creates several threads to process
+    # data sources with a FileIngest module)
+    #--------------------------------------------
+    # Register start time
+    g_start_time = time.time()
+    g_elapsed_time_secs = -1 # (impossible value)
+
     def getModuleDisplayName(self):
         return self.moduleName
 
@@ -171,6 +182,42 @@ class FDRIModule(DataSourceIngestModule):
 
         self.context = context
 
+
+
+###--------------------------------------------------------------------
+    #--------------------------------------------------------------------
+    # Added by Patricio 
+    # 2018-07-21
+    #--------------------------------------------------------------------
+    def shutDown(self):
+        """shutdown code"""
+        # Elaspsed time
+        FDRIModuleFactory.g_elapsed_time_secs = time.time() -\
+                                        FDRIModuleFactory.g_start_time
+
+        Log_S = "Total elapsed time: %f secs" %\
+                (FDRIModuleFactory.g_elapsed_time_secs)
+        self.log(Level.INFO, Log_S)
+##       # LOG
+##        Log_S = "number of analyzed files %d "\
+##            "(%d not PDF, %d PDF [%d signed PDF]) -- %d inserted (%f secs)" %\
+##            (FindSignedPDFsFilesIngestModuleFactory.g_files_count,
+##             FindSignedPDFsFilesIngestModuleFactory.g_NotPDFFiles_count,
+##             FindSignedPDFsFilesIngestModuleFactory.g_PDFFiles_count,
+##             FindSignedPDFsFilesIngestModuleFactory.g_signedPDFFiles_count,
+##             FindSignedPDFsFilesIngestModuleFactory.g_PDFFilesInserted_count, 
+##             g_elapsed_time_secs)
+##        self.log(Level.INFO, Log_S)
+##
+##        # Post a message to the ingest messages in box.
+##        msg_S = Log_S
+##
+##        # Post message on central logger
+##        self.postIngestMessage(self.getModuleName(), msg_S)
+###--------------------------------------------------------------------
+
+
+
     # Where the analysis is done.
     # The 'dataSource' object being passed in is of type org.sleuthkit.datamodel.Content.
     # See: http://www.sleuthkit.org/sleuthkit/docs/jni-docs/4.4.1/interfaceorg_1_1sleuthkit_1_1datamodel_1_1_content.html
@@ -180,6 +227,9 @@ class FDRIModule(DataSourceIngestModule):
 
         # we don't know how much work there is yet
         progressBar.switchToIndeterminate()
+
+        # Start timer for file copy operation
+        start_copy_time = time.time()
 
         # case insensitive SQL LIKE clause is used to query the case database
         # FileManager API: http://sleuthkit.org/autopsy/docs/api-docs/4.4.1/classorg_1_1sleuthkit_1_1autopsy_1_1casemodule_1_1services_1_1_file_manager.html
@@ -208,33 +258,76 @@ class FDRIModule(DataSourceIngestModule):
         if not os.path.exists(tempDir + "\\" + dataSource.getName()):
             os.mkdir(tempDir + "\\" + dataSource.getName())
 
-        # We allways copy the files, as we will want to change them
+        # We allways copy the files (except if a copy already exists)
+        # as we will want to change them
         try:
             os.mkdir(module_dir)
         except:
             self.log(Level.INFO, "Directory already exists for this module")
 
+        C_FILE_MIN_SIZE = 1025      # Minimum size for file to be processed
+        total_files = 0 
+        total_small_files = 0
         try:
-            os.mkdir(module_dir + "\\img\\")
+            dir_img = module_dir + "\\img\\" 
+            os.mkdir(dir_img)
+            
+            dir_small_files = module_dir + "\\small_files\\"
+            os.mkdir(dir_small_files)
+
             for file in files:
-                # If file size is more than 1kb
+                total_files = total_files + 1
+
+                file_size = file.getSize()
+                # If file size is more than C_FILE_MIN_SIZE
                 # TODO:: User Choice as option
-                if file.getSize() > 1024:
-                    filename, file_extension = os.path.splitext(
-                        file.getName())
+                if file_size >= C_FILE_MIN_SIZE:
+                    filename, file_extension = os.path.splitext(file.getName())
                     ContentUtils.writeToFile(file, File(
                         module_dir + "\\img\\" + filename + "__id__" + str(file.getId()) + file_extension))
-                else:
-                    self.log(Level.INFO, "Skiping file: " + file.getName())
+
+                # We copy small files to a different DIR, so that we
+                # can look at them, if needed
+                if file_size < C_FILE_MIN_SIZE:
+                    total_small_files = total_small_files + 1
+
+                    filename, file_extension = os.path.splitext(file.getName())
+                    dest_filename = "%s%s__id__%d%s" %\
+                      (dir_small_files,filename,file.getId(),file_extension)
+                    ContentUtils.writeToFile(file, File(dest_filename))
+
+                    Log_S = "Skipping file: %s (%d bytes)" %\
+                                        (file.getName(),file.getSize())
+                    # LOG
+                    self.log(Level.INFO, Log_S)
         except:
             self.log(
                 Level.INFO, "Image folder already exists, skiping file copy")
+
+        #----------------------------------------
+        # Log stats
+        #----------------------------------------
+        # shutdown copy file timer
+        elapsed_copy_time_secs = time.time() - start_copy_time
+
+        Log_S = "%d image files (%d of these were left out -- size <= "\
+                "%d bytes)" % (total_files, total_small_files,C_FILE_MIN_SIZE)
+        self.log(Level.INFO, Log_S)
+        total_copied_files = total_files - total_small_files
+        Log_S = "Files copy operation (%d files) took %f secs" %\
+                (total_copied_files,elapsed_copy_time_secs)
+        self.log(Level.INFO, Log_S)
+
+        #----------------------------------------
+        # Start processing timer
+        #----------------------------------------
+        start_process_time = time.time()
 
         # Location where the output of executable will appear
         #outFile = module_dir + "\\facesFound.txt"
         #outDFxml = module_dir + "\\dfxml_" + FDRIModuleFactory.moduleName + ".xml"
         #outPositiveFile = module_dir + "\\wanted.txt"
-        timestamp = datetime.now().strftime('%YY%mM%dD-%HH%MM%SS')
+        timestamp = datetime.now().strftime('%Y-%m-%d_%Hh%Mm%Ss')
         workspace = module_dir + "\\" + timestamp
         configFilePath = workspace + "\\params.json"
 
@@ -276,6 +369,14 @@ class FDRIModule(DataSourceIngestModule):
         if self.context.isJobCancelled():
             return IngestModule.ProcessResult.OK
 
+        #----------------------------------------
+        # Terminate start_process_time counter
+        #----------------------------------------
+        elapsed_process_time_secs = time.time() - start_process_time
+        Log_S = "Process of image files by FDRI.exe took %f secs" %\
+                (elapsed_process_time_secs)
+        self.log(Level.INFO, Log_S)
+ 
         # Use blackboard class to index blackboard artifacts for keyword search
         blackboard = Case.getCurrentCase().getServices().getBlackboard()
 
@@ -406,17 +507,23 @@ class FDRIModule(DataSourceIngestModule):
         if self.deleteAfter:
             self.deleteFiles(tempDir + "\\" + dataSource.getName())
 
-        message = IngestMessage.createMessage(
-            IngestMessage.MessageType.DATA, FDRIModuleFactory.moduleName, "Found %d images with faces" % count)
 
+        FDRIModuleFactory.g_elapsed_time_secs = time.time() -\
+                                        FDRIModuleFactory.g_start_time
+
+        # Format message to be shown at "Ingest messages"
+        ingest_msg_S = "Found %d images with faces (%f secs)" %\
+                (count, FDRIModuleFactory.g_elapsed_time_secs)
+
+        message = IngestMessage.createMessage( IngestMessage.MessageType.DATA,
+                FDRIModuleFactory.moduleName, ingest_msg_S)
         IngestServices.getInstance().postMessage(message)
 
         return IngestModule.ProcessResult.OK
 
-    #
+    #======================================================
     # Helper functions
-    #
-
+    #======================================================
     # File cleanup
     def deleteFiles(self, path):
         # ignoring the error if the directory is empty
