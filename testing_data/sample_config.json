@@ -1,0 +1,16 @@
+{
+    "_comment1": "This is where the executable will store all the output",
+    "workspace": "C:\\Users\\alexf\\OneDrive\\Desktop\\qwerty\\ModuleOutput\\",
+    "_comment2": "If recognition is true, it will try to find the positive fases in the wanted_faces option",
+    "doRecognition": true,
+    "_comment3": "This are the network weights to initialize the models",
+    "paths": {
+        "0": "C:\\Users\\alexf\\AppData\\Roaming\\autopsy\\python_modules\\FDRI\\mmod_human_face_detector.dat",
+        "1": "C:\\Users\\alexf\\AppData\\Roaming\\autopsy\\python_modules\\FDRI\\dlib_face_recognition_resnet_model_v1.dat",
+        "2": "C:\\Users\\alexf\\AppData\\Roaming\\autopsy\\python_modules\\FDRI\\shape_predictor_5_face_landmarks.dat"
+    },
+    "_comment4": "Folder with the images",
+    "imagesPath": "C:\\Users\\alexf\\OneDrive\\Desktop\\qwerty\\ModuleOutput\\LogicalFileSet1\\FDRI\\img",
+    "_comment5": "Folder with the wanted person images",
+    "wanted_faces": "C:\\Users\\alexf\\OneDrive\\Desktop\\modulo\\testing_data\\face_to_find"
+}
