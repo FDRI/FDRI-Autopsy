@@ -1,0 +1,3 @@
+# FDRI - Split version
+
+This version of the FDRI module use image splitting instead of image resizing for large images
